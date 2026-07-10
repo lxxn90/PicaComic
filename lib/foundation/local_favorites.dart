@@ -214,7 +214,7 @@ class FavoriteItem {
       : name = row["name"],
         author = row["author"],
         type = FavoriteType(row["type"]),
-        tags = (row["tags"] as String).split(","),
+        tags = (row["tags"] as String?)?.split(",") ?? [],
         target = row["target"],
         coverPath = row["cover_path"],
         time = row["time"] {
@@ -655,9 +655,8 @@ class LocalFavoritesManager {
   /// 使用 Set 来确保同一漫画存在于多个文件夹中时只统计一次
   int get totalComics {
     var uniqueComics = <String>{};
+    final tables = _getTablesWithDB();
     for (var folder in folderNames) {
-      // 检查表是否存在
-      final tables = _getTablesWithDB();
       if (!tables.contains(folder)) {
         continue;
       }
@@ -842,7 +841,7 @@ class LocalFavoritesManager {
 
     var res = _db.select("""
       select * from "$folder"
-      where target == '${comic.target}';
+      where target == '${comic.target.toParam}' and type == ${comic.type.key};
     """);
     if (res.isNotEmpty) {
       return;
@@ -930,8 +929,15 @@ class LocalFavoritesManager {
   }
 
   void checkAndDeleteCover(FavoriteItem item) async {
-    if ((await find(item.target, item.type)).isEmpty) {
-      (await getCover(item)).deleteSync();
+    try {
+      if ((await find(item.target, item.type)).isEmpty) {
+        var coverFile = await getCover(item);
+        if (await coverFile.exists()) {
+          await coverFile.delete();
+        }
+      }
+    } catch (e) {
+      Log.error("LocalFavorites", "Failed to checkAndDeleteCover: $e");
     }
   }
 
@@ -1007,50 +1013,56 @@ class LocalFavoritesManager {
       final targets = List<String>.from(_pendingTargets);
       _pendingTargets.clear();
       bool isModified = false;
-      _db.execute("BEGIN TRANSACTION;");
-      for (final t in targets) {
-        final type = _pendingTypes[t]!;
-        for (final folder in folderNames) {
-          final tables = _getTablesWithDB();
-          if (!tables.contains(folder)) {
-            continue;
-          }
-          var rows = _db.select("""
-            select * from "$folder"
-            where target == ? and type == ?;
-          """, [t, type.key]);
-          if (rows.isNotEmpty) {
-            isModified = true;
-            var newTime = DateTime.now()
-                .toIso8601String()
-                .replaceFirst("T", " ")
-                .substring(0, 19);
-            String updateLocationSql = "";
-            if (appdata.settings[54] == "1") {
-              int maxValue = _db.select("""
-                SELECT MAX(display_order) AS max_value
-                FROM "$folder";
-              """).firstOrNull?["max_value"] ?? 0;
-              updateLocationSql = "display_order = ${maxValue + 1},";
-            } else if (appdata.settings[54] == "2") {
-              int minValue = _db.select("""
-                SELECT MIN(display_order) AS min_value
-                FROM "$folder";
-              """).firstOrNull?["min_value"] ?? 0;
-              updateLocationSql = "display_order = ${minValue - 1},";
+      try {
+        _db.execute("BEGIN TRANSACTION;");
+        for (final t in targets) {
+          final type = _pendingTypes[t]!;
+          for (final folder in folderNames) {
+            final tables = _getTablesWithDB();
+            if (!tables.contains(folder)) {
+              continue;
             }
-            _db.execute("""
-                UPDATE "$folder"
-                SET 
-                  $updateLocationSql
-                  time = '$newTime'
-                WHERE target == '${t.toParam}';
-              """);
+            var rows = _db.select("""
+              select * from "$folder"
+              where target == ? and type == ?;
+            """, [t, type.key]);
+            if (rows.isNotEmpty) {
+              isModified = true;
+              var newTime = DateTime.now()
+                  .toIso8601String()
+                  .replaceFirst("T", " ")
+                  .substring(0, 19);
+              String updateLocationSql = "";
+              if (appdata.settings[54] == "1") {
+                int maxValue = _db.select("""
+                  SELECT MAX(display_order) AS max_value
+                  FROM "$folder";
+                """).firstOrNull?["max_value"] ?? 0;
+                updateLocationSql = "display_order = ${maxValue + 1},";
+              } else if (appdata.settings[54] == "2") {
+                int minValue = _db.select("""
+                  SELECT MIN(display_order) AS min_value
+                  FROM "$folder";
+                """).firstOrNull?["min_value"] ?? 0;
+                updateLocationSql = "display_order = ${minValue - 1},";
+              }
+              _db.execute("""
+                  UPDATE "$folder"
+                  SET 
+                    $updateLocationSql
+                    time = '$newTime'
+                  WHERE target == '${t.toParam}';
+                """);
+            }
           }
+          _pendingTypes.remove(t);
         }
-        _pendingTypes.remove(t);
+        _db.execute("COMMIT;");
+      } catch (e) {
+        _db.execute("ROLLBACK;");
+        Log.error("LocalFavorites", "Transaction failed in onReadEnd: $e");
+        rethrow;
       }
-      _db.execute("COMMIT;");
       if (isModified) {
         updateUI();
       }
@@ -1110,11 +1122,11 @@ class LocalFavoritesManager {
         continue; // 跳过不存在的表
       }
 
-      keyword = "%$keyword%";
+      var searchPattern = "%$keyword%";
       var res = _db.select("""
         SELECT * FROM "$table" 
         WHERE name LIKE ? OR author LIKE ? OR tags LIKE ?;
-      """, [keyword, keyword, keyword]);
+      """, [searchPattern, searchPattern, searchPattern]);
       for (var comic in res) {
         comics.add(
             FavoriteItemWithFolderInfo(FavoriteItem.fromRow(comic), table));
