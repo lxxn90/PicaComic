@@ -173,6 +173,17 @@ class DownloadPageLogic extends StateController {
     searchController?.dispose();
   }
 
+  @override
+  void dispose() {
+    _searchDebounceTimer?.cancel();
+    _tagDebounceTimer?.cancel();
+    _categoryDebounceTimer?.cancel();
+    searchFocusNode?.dispose();
+    searchFocusNode = null;
+    disposeSearchController();
+    super.dispose();
+  }
+
   ///是否正在加载
   bool loading = true;
 
@@ -587,7 +598,7 @@ class _DownloadPageState extends State<DownloadPage> {
   @override
   void dispose() {
     _route?.animation?.removeStatusListener(_handleStatusChange);
-    logic.disposeSearchController();
+    logic.dispose();
     super.dispose();
   }
 
