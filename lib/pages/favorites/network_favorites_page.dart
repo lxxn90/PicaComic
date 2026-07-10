@@ -89,14 +89,20 @@ class _NormalFavoritePageState extends State<_NormalFavoritePage> {
 
   Future<void> openRandomFavorite() async {
     final dialog = showLoadingDialog(context);
-    final res = await NhentaiNetwork().getRandomFavoriteId();
-    dialog.close();
-    if (!mounted) return;
-    if (res.error || res.data == null || res.data!.isEmpty) {
-      showToast(message: res.errorMessage ?? 'Error');
-      return;
+    try {
+      final res = await NhentaiNetwork().getRandomFavoriteId();
+      dialog.close();
+      if (!mounted) return;
+      if (res.error || res.data == null || res.data!.isEmpty) {
+        showToast(message: res.errorMessage ?? 'Error');
+        return;
+      }
+      context.to(() => ComicPage(sourceKey: 'nhentai', id: res.data!));
+    } catch (e) {
+      dialog.close();
+      if (!mounted) return;
+      showToast(message: 'Error: $e');
     }
-    context.to(() => ComicPage(sourceKey: 'nhentai', id: res.data!));
   }
 
   @override
@@ -260,7 +266,7 @@ class _MultiFolderFavoritesPage extends StatefulWidget {
   final FavoriteData data;
 
   @override
-  State<_MultiFolderFavoritesPage> createState() =>
+  State<_MultiFolderFavoritesPage> createState =>
       _MultiFolderFavoritesPageState();
 }
 
@@ -283,12 +289,20 @@ class _MultiFolderFavoritesPageState extends State<_MultiFolderFavoritesPage> {
       if (!mounted) return;
       _loading = false;
       if (res.error) {
-        setState(() {
-          _errorMessage = res.errorMessage;
+        Future.microtask(() {
+          if (mounted) {
+            setState(() {
+              _errorMessage = res.errorMessage;
+            });
+          }
         });
       } else {
-        setState(() {
-          folders = res.data;
+        Future.microtask(() {
+          if (mounted) {
+            setState(() {
+              folders = res.data;
+            });
+          }
         });
       }
     }
